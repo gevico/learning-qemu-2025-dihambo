@@ -53,6 +53,10 @@ static void g233_soc_init(Object *obj)
      * You can add more devices here(e.g. cpu, gpio)
      * Attention: The cpu resetvec is 0x1004
      */
+     G233SoCState *s = RISCV_G233_SOC(obj);
+
+     object_initialize_child(obj, "cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_SIFIVE_GPIO);
 }
 
 static void g233_soc_realize(DeviceState *dev, Error **errp)
@@ -63,6 +67,19 @@ static void g233_soc_realize(DeviceState *dev, Error **errp)
     const MemMapEntry *memmap = g233_memmap;
 
     /* CPUs realize */
+    /* 1. 必填：告诉 SoC 用什么型号的 CPU (e.g. sifive-e31, rv64) */
+    qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type", ms->cpu_type);
+
+    /* 2. 必填：同步命令行传入的核心数 */
+    qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", ms->smp.cpus);
+
+    /* 3. 必填(根据你的注释)：设置复位地址 */
+    qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec", 0x1004);
+
+    /* 提交变更，真正创建 CPU */
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
+        return;
+    }
 
     /* Mask ROM */
     memory_region_init_rom(&s->mask_rom, OBJECT(dev), "riscv.g233.mrom",
@@ -160,9 +177,14 @@ static void g233_machine_init(MachineState *machine)
     }
 
     /* Initialize SoC */
+    object_initialize_child(OBJECT(machine), "soc", &s->soc, TYPE_RISCV_G233_SOC);
 
+    qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Data Memory(DDR RAM) */
+    memory_region_add_subregion(get_system_memory(),
+                                memmap[G233_DEV_DRAM].base,
+                                machine->ram);
 
     /* Mask ROM reset vector */
     uint32_t reset_vec[5];
